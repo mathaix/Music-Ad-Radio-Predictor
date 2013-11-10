@@ -9,6 +9,8 @@ import time
 from math import sqrt
 import threading
 import datetime
+import wave as wv
+from pymir import AudioFile
 
 matplotlib.use('TkAgg')
 CHUNK = 1024
@@ -24,6 +26,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 # implement the default mpl key bindings
 from matplotlib.backend_bases import key_press_handler
 from matplotlib.figure import Figure
+import thread
 
 import sys
 if sys.version_info[0] < 3:
@@ -87,7 +90,6 @@ def _refresh():
 def _write_music():
 	_write_file("Music")
 	
-	
 def _write_Advert():
     _write_file("Advert")
 		
@@ -122,20 +124,79 @@ def listen_loop():
 	plot_mean.plot(freq_avg)
 	canvas_mean.show()
 	root.after(0,listen_loop)
-	
+
+def _analyze_file():
+    thread.start_new_thread( _analyze_thread , ('analyze-thread',))
+
+
+def _analyze_thread(thread_name):
+        _write_file("analyze")
+        _analyze()
+
+def getSpectroidData(audiofile):
+    wavData = AudioFile.open(audiofile)
+    flattness = float(wavData.spectrum().flatness())
+    kurtois = wavData.spectrum().kurtosis()
+    centroid = wavData.spectrum().centroid()
+    fixedFrames = wavData.frames(1024)
+    spectra = [f.spectrum() for f in fixedFrames]
+    return (flattness, kurtois, centroid, spectra)
+
+def getCentroidData(spectra):
+    centroid_data = [spectra[i].centroid() for i in range(0,len(spectra))]
+    return (numpy.max(centroid_data),numpy.min(centroid_data),
+            numpy.mean(centroid_data),
+            numpy.std(centroid_data))
+
+def _analyze():
+    fname = "Tmp/tmp.wav"
+    (sample_rate, input_signal) = get_wav_info(fname)
+    (rfreqs, fft_mag) = compute_fft(float(sample_rate), input_signal)
+    (flattness, kurtois, centroid, spectra) = getSpectroidData(fname)
+    (high, low, mean, std) = getCentroidData(spectra)
+    result = model(numpy.mean(fft_mag[0:2000]), numpy.mean(fft_mag[2000:4000]), numpy.mean(fft_mag), high, low, mean, std)
+    result = model_2(numpy.mean(fft_mag[0:2000]), high, centroid)
+
+def get_wav_info(wav_file):
+    wav = wv.open(wav_file, 'r')
+    frames = wav.readframes(-1)
+    sound_info = pylab.fromstring(frames, 'Int16')
+    frame_rate = wav.getframerate()
+    wav.close()
+    return frame_rate,sound_info
+
+def compute_fft(sample_rate,input_signal):
+    fft_out = numpy.fft.rfft(input_signal)
+    fft_mag = [sqrt(i.real**2 + i.imag**2)/len(fft_out) for i in fft_out]
+    num_samples = len(input_signal)
+    rfreqs = [(i*1.0/num_samples)*sample_rate for i in range(num_samples//2+1)]   
+    return (rfreqs, fft_mag)
+
+def model(low, high, mean, centroid_high, centroid_low, centroid_mean, centroid_std):
+    print low, high, mean,centroid_high, centroid_low, centroid_mean, centroid_std
+    result = 8.028 - 0.187*low + 2.157*mean - 1.118e-3*centroid_high -8.609e-5*centroid_low + 3.684e-4*centroid_mean -2.216e-3*centroid_std
+    print "{}".format(logistic(result))
+ 
+def model_2 (low, centroid_high, centroid):
+    result = 4.047 - 0.0834644*low - 0.0017282*centroid_high + 0.0026275*centroid
+    print "model 2 {}".format(logistic(result))
+
+def logistic(z):
+    return 1.0 / (1.0 + numpy.exp(-z))
 
 def _write_file(filetype):
 	CHUNK = 1024
 	FORMAT = pyaudio.paInt16
 	CHANNELS = 2
 	RATE = 44100
-	RECORD_SECONDS = 5
+	RECORD_SECONDS = 15
 	
 	if filetype=="Advert":
 		WAVE_OUTPUT_FILENAME = "Advert/output%s.wav" % datetime.datetime.now().strftime("%y%m%d%H%M%S")
-	else:
+	elif filetype=="Music":
 		WAVE_OUTPUT_FILENAME = "Music/output%s.wav" % datetime.datetime.now().strftime("%y%m%d%H%M%S")
-
+        else:
+            WAVE_OUTPUT_FILENAME = "Tmp/tmp.wav"
 	p = pyaudio.PyAudio()
 
 	stream = p.open(format=FORMAT,
@@ -180,7 +241,8 @@ button = Tk.Button(master=root, text='Write Advert', command=_write_Advert)
 button.pack(side=Tk.LEFT)
 button = Tk.Button(master=root, text='Write Music', command=_write_music)
 button.pack(side=Tk.LEFT)
-
+button = Tk.Button(master=root, text='Analyze', command=_analyze_file)
+button.pack(side=Tk.LEFT)
 
 
 
